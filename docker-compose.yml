@@ -12,6 +12,12 @@ services:
       - CHUNK_TARGET=${CHUNK_TARGET:-1000}
       - CHUNK_MAX=${CHUNK_MAX:-1000}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-200}
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.wrapper.rule=Host(`azureorc.hyperioncode.de`)"
+      - traefik.http.routers.wrapper.entryPoints=https
+      - traefik.http.routers.wrapper.tls=true
+      - traefik.http.services.wrapper.loadbalancer.server.port=8000
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 30s
