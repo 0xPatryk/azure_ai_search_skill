@@ -1,0 +1,6 @@
+fastapi==0.135.3
+uvicorn[standard]==0.44.0
+httpx==0.28.1
+pydantic==2.13.1
+python-multipart==0.0.26
+langchain-text-splitters==1.1.1
