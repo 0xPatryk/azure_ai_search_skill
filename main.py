@@ -105,6 +105,9 @@ def get_pdf_page_count(file_bytes: bytes) -> int:
 
 async def process_document_via_docling(client: httpx.AsyncClient, file_bytes: bytes, file_name: str, fast_mode: bool = False) -> str:
     """Send document to Docling. Uses fast OCR settings for large documents."""
+    file_size_mb = len(file_bytes) / (1024 * 1024)
+    logger.info(f"Preparing Docling request | File: {file_name} | Size: {file_size_mb:.2f} MB | Fast: {fast_mode}")
+
     b64_string = base64.b64encode(file_bytes).decode("utf-8")
 
     if fast_mode:
@@ -117,7 +120,6 @@ async def process_document_via_docling(client: httpx.AsyncClient, file_bytes: by
             "image_export_mode": "placeholder",
             "to_formats": ["md"]
         }
-        logger.info(f"Using FAST mode for {file_name}")
     else:
         options = {
             "do_ocr": True,
@@ -139,34 +141,51 @@ async def process_document_via_docling(client: httpx.AsyncClient, file_bytes: by
             }
         ]
     }
-    
+
     # Free memory immediately before awaiting HTTP request
     del file_bytes
     del b64_string
-    
+
     headers = {"Content-Type": "application/json"}
     if DOCLING_API_KEY:
         headers["X-Api-Key"] = DOCLING_API_KEY
 
-    response = await client.post(
-        f"{DOCLING_URL}/v1/convert/source",
-        json=payload,
-        headers=headers,
-    )
+    import time
+    t0 = time.monotonic()
+    logger.info(f"Sending to Docling | URL: {DOCLING_URL}/v1/convert/source | File: {file_name}")
+
+    try:
+        response = await client.post(
+            f"{DOCLING_URL}/v1/convert/source",
+            json=payload,
+            headers=headers,
+        )
+    except httpx.ConnectError as e:
+        logger.error(f"Docling connection failed | URL: {DOCLING_URL} | Error: {e}")
+        raise
+    except httpx.TimeoutException as e:
+        elapsed = time.monotonic() - t0
+        logger.error(f"Docling timeout after {elapsed:.1f}s | File: {file_name} | Error: {e}")
+        raise
+
+    elapsed = time.monotonic() - t0
+    logger.info(f"Docling responded | Status: {response.status_code} | Time: {elapsed:.1f}s | File: {file_name}")
+
     response.raise_for_status()
     result_json = response.json()
-    
+
     # Cleanup response payload string to save memory
-    del payload 
+    del payload
 
     # Extract Markdown
     doc = result_json.get("document", {})
     markdown = (doc.get("md_content") or doc.get("markdown_content") or doc.get("markdown") or "").strip()
+    logger.info(f"Extracted markdown | Chars: {len(markdown):,} | File: {file_name}")
 
     # Final cleanup
     del result_json
     del doc
-    
+
     return markdown if markdown else f"# Empty or unprocessable document\n\nFile: {file_name}"
 
 # ====================== FASTAPI FOR PROD (AZURE) ======================
