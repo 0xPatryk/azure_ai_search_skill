@@ -105,8 +105,8 @@ def get_pdf_page_count(file_bytes: bytes) -> int:
         return 0
 
 
-def extract_text_with_pypdf(file_bytes: bytes, file_name: str) -> Optional[str]:
-    """Fast text extraction using pypdf. Returns None if no meaningful text found."""
+def extract_text_with_pypdf(file_bytes: bytes, file_name: str) -> str:
+    """Fast text extraction using pypdf. Always returns text (may be empty for scanned PDFs)."""
     try:
         t0 = time.monotonic()
         reader = PdfReader(io.BytesIO(file_bytes))
@@ -118,14 +118,10 @@ def extract_text_with_pypdf(file_bytes: bytes, file_name: str) -> Optional[str]:
         elapsed = time.monotonic() - t0
         full_text = "\n\n".join(pages_text)
         logger.info(f"pypdf extraction | Chars: {len(full_text):,} | Pages: {len(reader.pages)} | Time: {elapsed:.1f}s | File: {file_name}")
-        # If less than 100 chars per page on average, PDF is likely scanned/image-based
-        if len(full_text) < len(reader.pages) * 100:
-            logger.info(f"pypdf text too sparse, falling back to Docling | File: {file_name}")
-            return None
-        return full_text
+        return full_text if full_text else f"# Empty or unprocessable document\n\nFile: {file_name}"
     except Exception as e:
-        logger.warning(f"pypdf extraction failed, falling back to Docling | File: {file_name} | Error: {e}")
-        return None
+        logger.error(f"pypdf extraction failed | File: {file_name} | Error: {e}")
+        return f"# Failed to extract text\n\nFile: {file_name}\nError: {e}"
 
 
 async def process_document_via_docling(client: httpx.AsyncClient, file_bytes: bytes, file_name: str, fast_mode: bool = False) -> str:
@@ -252,16 +248,15 @@ async def azure_search_docling(
             data.pop("file_data", None)
 
             fast_mode = False
-            markdown = None
             if file_name.lower().endswith(".pdf"):
                 page_count = get_pdf_page_count(file_bytes)
                 fast_mode = page_count > FAST_OCR_PAGE_THRESHOLD
                 logger.info(f"PDF pages: {page_count} | Fast mode: {fast_mode}")
-                if fast_mode:
-                    markdown = extract_text_with_pypdf(file_bytes, file_name)
 
-            if markdown is None:
-                markdown = await process_document_via_docling(client, file_bytes, file_name, fast_mode=fast_mode)
+            if fast_mode:
+                markdown = extract_text_with_pypdf(file_bytes, file_name)
+            else:
+                markdown = await process_document_via_docling(client, file_bytes, file_name, fast_mode=False)
 
             metadata = {"file_name": file_name, "path": path}
             chunks = chunk_markdown_with_langchain(markdown, metadata)
@@ -318,16 +313,15 @@ async def dev_batch_test():
 
                 # Use fast mode for large PDFs
                 fast_mode = False
-                markdown = None
                 if file_path.suffix.lower() == ".pdf":
                     page_count = get_pdf_page_count(file_bytes)
                     fast_mode = page_count > FAST_OCR_PAGE_THRESHOLD
                     logger.info(f"PDF pages: {page_count} | Fast mode: {fast_mode}")
-                    if fast_mode:
-                        markdown = extract_text_with_pypdf(file_bytes, file_path.name)
 
-                if markdown is None:
-                    markdown = await process_document_via_docling(client, file_bytes, file_path.name, fast_mode=fast_mode)
+                if fast_mode:
+                    markdown = extract_text_with_pypdf(file_bytes, file_path.name)
+                else:
+                    markdown = await process_document_via_docling(client, file_bytes, file_path.name, fast_mode=False)
                 
                 # Save Raw Markdown
                 output_md.write_text(markdown, encoding="utf-8")
