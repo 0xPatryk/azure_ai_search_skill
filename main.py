@@ -5,6 +5,7 @@ Handles production RAG chunking via FastAPI and local Dev batch testing.
 Optimized for memory efficiency, avoiding leaks by managing memory manually and cleaning up.
 """
 
+import asyncio
 import base64
 import gc
 import io
@@ -12,6 +13,7 @@ import json
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -28,7 +30,7 @@ ENV = os.getenv("ENV", "prod").lower()
 DOCLING_URL = os.getenv("DOCLING_URL", "http://docling:5001").rstrip("/")
 DOCLING_API_KEY = os.getenv("DOCLING_API_KEY", "")
 WRAPPER_SECRET = os.getenv("WRAPPER_SECRET", "")
-DOCLING_TIMEOUT = float(os.getenv("DOCLING_TIMEOUT", "600.0"))
+DOCLING_TIMEOUT = min(float(os.getenv("DOCLING_TIMEOUT", "220.0")), 220.0)  # Azure skill max is 230s
 
 CHUNK_TARGET = int(os.getenv("CHUNK_TARGET", "1000"))
 CHUNK_MAX = int(os.getenv("CHUNK_MAX", "1000"))
@@ -150,7 +152,6 @@ async def process_document_via_docling(client: httpx.AsyncClient, file_bytes: by
     if DOCLING_API_KEY:
         headers["X-Api-Key"] = DOCLING_API_KEY
 
-    import time
     t0 = time.monotonic()
     logger.info(f"Sending to Docling | URL: {DOCLING_URL}/v1/convert/source | File: {file_name}")
 
@@ -214,24 +215,19 @@ async def azure_search_docling(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     client: httpx.AsyncClient = app.state.http_client
-    results = []
 
-    for record in request.values:
+    async def process_record(record: AzureSkillRecord) -> Dict[str, Any]:
         record_id = record.recordId
         data = record.data
-        
         try:
             file_name = data.get("file_name", "document.bin")
             path = data.get("path", "")
-            
-            logger.info(f"Processing recordId: {record_id} | File: {file_name}")
-            
-            file_bytes = extract_file_bytes(data.get("file_data"))
 
-            # Remove file_data from memory immediately
+            logger.info(f"Processing recordId: {record_id} | File: {file_name}")
+
+            file_bytes = extract_file_bytes(data.get("file_data"))
             data.pop("file_data", None)
 
-            # Use fast mode for large PDFs
             fast_mode = False
             if file_name.lower().endswith(".pdf"):
                 page_count = get_pdf_page_count(file_bytes)
@@ -239,33 +235,30 @@ async def azure_search_docling(
                 logger.info(f"PDF pages: {page_count} | Fast mode: {fast_mode}")
 
             markdown = await process_document_via_docling(client, file_bytes, file_name, fast_mode=fast_mode)
-            
+
             metadata = {"file_name": file_name, "path": path}
             chunks = chunk_markdown_with_langchain(markdown, metadata)
-            
-            # Clear markdown from memory
             del markdown
-            
-            results.append({
+
+            return {
                 "recordId": record_id,
                 "data": {"chunks": chunks},
                 "errors": [],
                 "warnings": [] if chunks else [{"message": "No chunks generated."}]
-            })
-            
+            }
         except Exception as e:
             logger.error(f"Failed recordId={record_id}: {str(e)}")
-            results.append({
+            return {
                 "recordId": record_id,
                 "data": {"chunks": []},
                 "errors": [{"message": str(e)}],
                 "warnings": []
-            })
+            }
         finally:
-            # Force garbage collection per large document to prevent Azure Batch OOM
             gc.collect()
 
-    return AzureSkillResponse(values=results)
+    results = await asyncio.gather(*[process_record(r) for r in request.values])
+    return AzureSkillResponse(values=list(results))
 
 
 # ====================== DEV MODE BATCH TEST ======================
