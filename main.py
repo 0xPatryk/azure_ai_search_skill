@@ -28,9 +28,9 @@ DOCLING_API_KEY = os.getenv("DOCLING_API_KEY", "")
 WRAPPER_SECRET = os.getenv("WRAPPER_SECRET", "")
 DOCLING_TIMEOUT = float(os.getenv("DOCLING_TIMEOUT", "600.0"))
 
-CHUNK_TARGET = 1200
-CHUNK_MAX = 1600
-CHUNK_OVERLAP = 150
+CHUNK_TARGET = int(os.getenv("CHUNK_TARGET", "1000"))
+CHUNK_MAX = int(os.getenv("CHUNK_MAX", "1000"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 
 INPUT_DIR = Path("/data/docs/in")
 OUTPUT_DIR = Path("/data/docs/out")
