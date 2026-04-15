@@ -63,7 +63,7 @@ def extract_file_bytes(file_data: Any) -> bytes:
     if isinstance(file_data, str):
         return base64.b64decode(file_data)
     if isinstance(file_data, dict):
-        for key in ("data", "$content", "content", "base64"):
+        for key in ("$content", "data", "content", "base64"):
             val = file_data.get(key)
             if isinstance(val, str):
                 return base64.b64decode(val)
@@ -198,8 +198,8 @@ async def azure_search_docling(
             results.append({
                 "recordId": record_id,
                 "data": {"chunks": chunks},
-                "errors": None,
-                "warnings": None if chunks else [{"message": "No chunks generated."}]
+                "errors": [],
+                "warnings": [] if chunks else [{"message": "No chunks generated."}]
             })
             
         except Exception as e:
@@ -208,7 +208,7 @@ async def azure_search_docling(
                 "recordId": record_id,
                 "data": {"chunks": []},
                 "errors": [{"message": str(e)}],
-                "warnings": None
+                "warnings": []
             })
         finally:
             # Force garbage collection per large document to prevent Azure Batch OOM
