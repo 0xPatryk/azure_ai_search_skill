@@ -7,6 +7,7 @@ Optimized for memory efficiency, avoiding leaks by managing memory manually and 
 
 import base64
 import gc
+import io
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
+from pypdf import PdfReader
 from fastapi import FastAPI, Header, HTTPException
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
@@ -31,6 +33,7 @@ DOCLING_TIMEOUT = float(os.getenv("DOCLING_TIMEOUT", "600.0"))
 CHUNK_TARGET = int(os.getenv("CHUNK_TARGET", "1000"))
 CHUNK_MAX = int(os.getenv("CHUNK_MAX", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
+FAST_OCR_PAGE_THRESHOLD = int(os.getenv("FAST_OCR_PAGE_THRESHOLD", "20"))
 
 INPUT_DIR = Path("/data/docs/in")
 OUTPUT_DIR = Path("/data/docs/out")
@@ -91,20 +94,42 @@ def chunk_markdown_with_langchain(markdown: str, metadata: dict) -> List[str]:
     return [c for c in final_chunks if len(c) > 100]
 
 
-async def process_document_via_docling(client: httpx.AsyncClient, file_bytes: bytes, file_name: str) -> str:
-    """Send document to Docling in memory, extract markdown and image descriptions."""
+def get_pdf_page_count(file_bytes: bytes) -> int:
+    """Get page count from PDF bytes without rendering. Returns 0 for non-PDFs."""
+    try:
+        reader = PdfReader(io.BytesIO(file_bytes))
+        return len(reader.pages)
+    except Exception:
+        return 0
+
+
+async def process_document_via_docling(client: httpx.AsyncClient, file_bytes: bytes, file_name: str, fast_mode: bool = False) -> str:
+    """Send document to Docling. Uses fast OCR settings for large documents."""
     b64_string = base64.b64encode(file_bytes).decode("utf-8")
-    
-    # Docling accuracy best practices payload
-    payload = {
-        "options": {
+
+    if fast_mode:
+        options = {
+            "do_ocr": True,
+            "ocr_engine": "rapidocr",
+            "ocr_lang": ["en", "de"],
+            "do_table_structure": True,
+            "table_mode": "fast",
+            "image_export_mode": "placeholder",
+            "to_formats": ["md"]
+        }
+        logger.info(f"Using FAST mode for {file_name}")
+    else:
+        options = {
             "do_ocr": True,
             "ocr_lang": ["en", "de"],
             "do_table_structure": True,
             "table_mode": "accurate",
             "image_export_mode": "placeholder",
             "to_formats": ["md"]
-        },
+        }
+
+    payload = {
+        "options": options,
         "target": {"kind": "inbody"},
         "sources": [
             {
@@ -183,11 +208,18 @@ async def azure_search_docling(
             logger.info(f"Processing recordId: {record_id} | File: {file_name}")
             
             file_bytes = extract_file_bytes(data.get("file_data"))
-            
+
             # Remove file_data from memory immediately
             data.pop("file_data", None)
-            
-            markdown = await process_document_via_docling(client, file_bytes, file_name)
+
+            # Use fast mode for large PDFs
+            fast_mode = False
+            if file_name.lower().endswith(".pdf"):
+                page_count = get_pdf_page_count(file_bytes)
+                fast_mode = page_count > FAST_OCR_PAGE_THRESHOLD
+                logger.info(f"PDF pages: {page_count} | Fast mode: {fast_mode}")
+
+            markdown = await process_document_via_docling(client, file_bytes, file_name, fast_mode=fast_mode)
             
             metadata = {"file_name": file_name, "path": path}
             chunks = chunk_markdown_with_langchain(markdown, metadata)
@@ -245,7 +277,14 @@ async def dev_batch_test():
                 with open(file_path, "rb") as f:
                     file_bytes = f.read()
 
-                markdown = await process_document_via_docling(client, file_bytes, file_path.name)
+                # Use fast mode for large PDFs
+                fast_mode = False
+                if file_path.suffix.lower() == ".pdf":
+                    page_count = get_pdf_page_count(file_bytes)
+                    fast_mode = page_count > FAST_OCR_PAGE_THRESHOLD
+                    logger.info(f"PDF pages: {page_count} | Fast mode: {fast_mode}")
+
+                markdown = await process_document_via_docling(client, file_bytes, file_path.name, fast_mode=fast_mode)
                 
                 # Save Raw Markdown
                 output_md.write_text(markdown, encoding="utf-8")

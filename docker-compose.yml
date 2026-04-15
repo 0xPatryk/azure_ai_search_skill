@@ -1,6 +1,8 @@
 services:
   wrapper:
     build: .
+    env_file:
+      - .env
     environment:
       - ENV=${ENV:-prod}
       - WRAPPER_SECRET=${WRAPPER_SECRET:?}
