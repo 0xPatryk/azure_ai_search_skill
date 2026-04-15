@@ -118,10 +118,10 @@ def extract_text_with_pypdf(file_bytes: bytes, file_name: str) -> str:
         elapsed = time.monotonic() - t0
         full_text = "\n\n".join(pages_text)
         logger.info(f"pypdf extraction | Chars: {len(full_text):,} | Pages: {len(reader.pages)} | Time: {elapsed:.1f}s | File: {file_name}")
-        return full_text if full_text else f"# Empty or unprocessable document\n\nFile: {file_name}"
+        return full_text
     except Exception as e:
         logger.error(f"pypdf extraction failed | File: {file_name} | Error: {e}")
-        return f"# Failed to extract text\n\nFile: {file_name}\nError: {e}"
+        return ""
 
 
 async def process_document_via_docling(client: httpx.AsyncClient, file_bytes: bytes, file_name: str, fast_mode: bool = False) -> str:
@@ -206,7 +206,7 @@ async def process_document_via_docling(client: httpx.AsyncClient, file_bytes: by
     del result_json
     del doc
 
-    return markdown if markdown else f"# Empty or unprocessable document\n\nFile: {file_name}"
+    return markdown
 
 # ====================== FASTAPI FOR PROD (AZURE) ======================
 @asynccontextmanager
