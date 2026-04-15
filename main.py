@@ -103,7 +103,7 @@ async def process_document_via_docling(client: httpx.AsyncClient, file_bytes: by
             "do_table_structure": True,
             "table_mode": "accurate",
             "image_export_mode": "placeholder",
-            "to_formats": ["md", "json"]
+            "to_formats": ["md"]
         },
         "target": {"kind": "inbody"},
         "sources": [
@@ -137,18 +137,6 @@ async def process_document_via_docling(client: httpx.AsyncClient, file_bytes: by
     # Extract Markdown
     doc = result_json.get("document", {})
     markdown = (doc.get("md_content") or doc.get("markdown_content") or doc.get("markdown") or "").strip()
-
-    # Extract Image Descriptions
-    pictures = doc.get("json_content", {}).get("pictures", [])
-    descriptions = []
-    for i, pic in enumerate(pictures):
-        annotations = pic.get("annotations", [])
-        desc_text = next((ann.get("text") for ann in annotations if ann.get("kind") == "description"), None)
-        if desc_text:
-            descriptions.append(f"**Image {i+1} Description:** {desc_text}")
-    
-    if descriptions:
-        markdown += "\n\n## Extracted Image Descriptions\n\n" + "\n\n".join(descriptions)
 
     # Final cleanup
     del result_json
