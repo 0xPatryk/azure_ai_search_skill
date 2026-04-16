@@ -75,7 +75,7 @@ def extract_file_bytes(file_data: Any) -> bytes:
     raise ValueError(f"Unsupported file_data format: {type(file_data)}")
 
 
-def chunk_markdown_with_langchain(markdown: str, metadata: dict) -> List[str]:
+def chunk_markdown_with_langchain(markdown: str, metadata: dict) -> List[Dict[str, str]]:
     """Basic chunking enriched with source metadata."""
     recursive_splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_MAX,
@@ -88,12 +88,12 @@ def chunk_markdown_with_langchain(markdown: str, metadata: dict) -> List[str]:
     file_name = metadata.get("file_name", "Unknown")
     path = metadata.get("path", "")
     chunk_prefix = f"---\nDocument: {file_name}\nPath: {path}\n---\n"
-    
+
     sub_chunks = recursive_splitter.split_text(markdown)
     for sub in sub_chunks:
         final_chunks.append(f"{chunk_prefix}{sub}".strip())
-    
-    return [c for c in final_chunks if len(c) > 100]
+
+    return [{"text": c} for c in final_chunks if len(c) > 100]
 
 
 def get_pdf_page_count(file_bytes: bytes) -> int:
