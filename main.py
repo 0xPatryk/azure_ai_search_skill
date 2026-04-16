@@ -279,7 +279,19 @@ async def azure_search_docling(
         finally:
             gc.collect()
 
-    results = await asyncio.gather(*[process_record(r) for r in request.values])
+    try:
+        results = await asyncio.gather(*[process_record(r) for r in request.values])
+    except Exception as e:
+        logger.error(f"Batch processing failed: {e}")
+        results = [
+            {
+                "recordId": r.recordId,
+                "data": {"chunks": []},
+                "errors": [{"message": f"Batch error: {str(e)}"}],
+                "warnings": None
+            }
+            for r in request.values
+        ]
     return AzureSkillResponse(values=list(results))
 
 
