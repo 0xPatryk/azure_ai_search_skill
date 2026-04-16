@@ -227,10 +227,29 @@ async def azure_search_docling(
     request: AzureSkillRequest, 
     x_api_key: Optional[str] = Header(None, alias="x-api-key")
 ):
+    # Log incoming request details
+    api_key_status = "present" if x_api_key else "missing"
+    api_key_match = "valid" if (WRAPPER_SECRET and x_api_key == WRAPPER_SECRET) else ("no-secret-configured" if not WRAPPER_SECRET else "invalid")
+    record_count = len(request.values)
+    record_summaries = []
+    for r in request.values:
+        data_keys = list(r.data.keys())
+        file_data_size = None
+        fd = r.data.get("file_data")
+        if isinstance(fd, str):
+            file_data_size = f"{len(fd) / 1024:.0f}KB"
+        elif isinstance(fd, dict):
+            content = fd.get("$content", fd.get("data", fd.get("content", "")))
+            if isinstance(content, str):
+                file_data_size = f"{len(content) / 1024:.0f}KB"
+        record_summaries.append(f"id={r.recordId} keys={data_keys} file_data={file_data_size or 'N/A'}")
+    logger.info(f"REQUEST IN | Records: {record_count} | API-Key: {api_key_status}/{api_key_match} | {'; '.join(record_summaries)}")
+
     if ENV == "dev":
         logger.warning("Received API request while in DEV mode.")
-        
+
     if WRAPPER_SECRET and x_api_key != WRAPPER_SECRET:
+        logger.warning(f"AUTH REJECTED | API-Key: {api_key_status} | Match: {api_key_match}")
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     client: httpx.AsyncClient = app.state.http_client
@@ -292,7 +311,18 @@ async def azure_search_docling(
             }
             for r in request.values
         ]
-    return AzureSkillResponse(values=list(results))
+    # Log response summary
+    response_values = list(results)
+    for rv in response_values:
+        rid = rv.get("recordId", "?")
+        chunks = rv.get("data", {}).get("chunks", [])
+        errors = rv.get("errors") or []
+        warnings = rv.get("warnings") or []
+        logger.info(f"RESPONSE OUT | recordId={rid} | chunks={len(chunks)} | errors={len(errors)} | warnings={len(warnings)}")
+        if errors:
+            logger.warning(f"RESPONSE ERRORS | recordId={rid} | {[e.get('message','') for e in errors]}")
+
+    return AzureSkillResponse(values=response_values)
 
 
 # ====================== DEV MODE BATCH TEST ======================
