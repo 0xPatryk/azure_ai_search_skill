@@ -40,8 +40,8 @@ CHUNK_MAX = int(os.getenv("CHUNK_MAX", "2000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "500"))
 FAST_OCR_PAGE_THRESHOLD = int(os.getenv("FAST_OCR_PAGE_THRESHOLD", "20"))
 
-INPUT_DIR = Path("/data/docs/in")
-OUTPUT_DIR = Path("/data/docs/out")
+INPUT_DIR = Path(os.getenv("INPUT_DIR", "/data/docs/in"))
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/data/docs/out"))
 SUPPORTED_EXT = {".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".html", ".md"}
 
 
@@ -283,7 +283,7 @@ async def process_document_via_docling(
                 dd = DoclingDocument.model_validate(json_doc)
             moved = reparent_picture_texts(dd)
             if moved > 0:
-                markdown = dd.export_to_markdown().strip()
+                markdown = dd.export_to_markdown(escape_html=False).strip()
                 logger.info(
                     f"Reparented {moved} picture-child texts | File: {file_name} | "
                     f"plain_chars={len(plain_md)} fixed_chars={len(markdown)}"
