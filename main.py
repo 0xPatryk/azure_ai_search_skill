@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
+from docling_core.types.doc import DoclingDocument, PictureItem
 from fastapi import FastAPI, Header, HTTPException
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
@@ -132,6 +133,39 @@ def extract_text_with_pypdf(file_bytes: bytes, file_name: str) -> str:
         return ""
 
 
+def reparent_picture_texts(doc: DoclingDocument) -> int:
+    """Workaround for docling#2345: text OCR'd inside PictureItems is stripped
+    from markdown export. Reparent those text items to the document body so
+    they survive MD export. Returns count of items moved."""
+    image_texts: dict[str, list] = {}
+    for t in doc.texts:
+        parent = getattr(t, "parent", None)
+        if parent and parent.cref and parent.cref.startswith("#/pictures"):
+            image_texts.setdefault(parent.cref, []).append(t)
+            t.parent.cref = "#/body"
+
+    if not image_texts:
+        return 0
+
+    moved = 0
+    pic_items = [i for i, _ in doc.iterate_items() if isinstance(i, PictureItem)]
+    for item in pic_items:
+        if item.self_ref not in image_texts:
+            continue
+        ref = item.get_ref()
+        try:
+            idx = doc.body.children.index(ref)
+        except ValueError:
+            continue
+        item.children = []
+        for st in image_texts[item.self_ref]:
+            doc.body.children.insert(idx, st.get_ref())
+            idx += 1
+            moved += 1
+        doc.body.children.remove(ref)
+    return moved
+
+
 async def process_document_via_docling(
     client: httpx.AsyncClient,
     file_bytes: bytes,
@@ -154,7 +188,7 @@ async def process_document_via_docling(
             "do_table_structure": True,
             "table_mode": "fast",
             "image_export_mode": "placeholder",
-            "to_formats": ["md"],
+            "to_formats": ["md", "json"],
         }
     else:
         options = {
@@ -164,7 +198,7 @@ async def process_document_via_docling(
             "do_table_structure": True,
             "table_mode": "accurate",
             "image_export_mode": "placeholder",
-            "to_formats": ["md"],
+            "to_formats": ["md", "json"],
         }
 
     payload = {
@@ -215,17 +249,38 @@ async def process_document_via_docling(
     # Cleanup response payload string to save memory
     del payload
 
-    # Extract Markdown
     doc = result_json.get("document", {})
-    markdown = (
+    plain_md = (
         doc.get("md_content")
         or doc.get("markdown_content")
         or doc.get("markdown")
         or ""
     ).strip()
+
+    json_doc = doc.get("json_content")
+    markdown = plain_md
+    if json_doc is not None:
+        try:
+            if isinstance(json_doc, str):
+                dd = DoclingDocument.model_validate_json(json_doc)
+            else:
+                dd = DoclingDocument.model_validate(json_doc)
+            moved = reparent_picture_texts(dd)
+            if moved > 0:
+                markdown = dd.export_to_markdown().strip()
+                logger.info(
+                    f"Reparented {moved} picture-child texts | File: {file_name} | "
+                    f"plain_chars={len(plain_md)} fixed_chars={len(markdown)}"
+                )
+            del dd
+        except Exception as e:
+            logger.warning(
+                f"Reparent pass failed, using plain MD | File: {file_name} | "
+                f"Error: {type(e).__name__}: {e}"
+            )
+
     logger.info(f"Extracted markdown | Chars: {len(markdown):,} | File: {file_name}")
 
-    # Final cleanup
     del result_json
     del doc
 

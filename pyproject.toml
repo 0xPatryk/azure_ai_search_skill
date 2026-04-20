@@ -11,4 +11,5 @@ dependencies = [
     "python-multipart>=0.0.26",
     "langchain-text-splitters>=1.1.1",
     "pypdf>=5.4.0",
+    "docling-core>=2.74.0",
 ]
