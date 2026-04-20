@@ -149,8 +149,8 @@ async def process_document_via_docling(
     if fast_mode:
         options = {
             "do_ocr": True,
-            "ocr_engine": "rapidocr",
-            "ocr_lang": ["en", "de"],
+            "ocr_engine": "tesseract",
+            "ocr_lang": ["deu", "eng"],
             "do_table_structure": True,
             "table_mode": "fast",
             "image_export_mode": "placeholder",
@@ -159,7 +159,8 @@ async def process_document_via_docling(
     else:
         options = {
             "do_ocr": True,
-            "ocr_lang": ["en", "de"],
+            "ocr_engine": "tesseract",
+            "ocr_lang": ["deu", "eng"],
             "do_table_structure": True,
             "table_mode": "accurate",
             "image_export_mode": "placeholder",
