@@ -35,9 +35,9 @@ DOCLING_TIMEOUT = min(
     float(os.getenv("DOCLING_TIMEOUT", "220.0")), 220.0
 )  # Azure skill max is 230s
 
-CHUNK_TARGET = int(os.getenv("CHUNK_TARGET", "1000"))
-CHUNK_MAX = int(os.getenv("CHUNK_MAX", "1000"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
+CHUNK_TARGET = int(os.getenv("CHUNK_TARGET", "2000"))
+CHUNK_MAX = int(os.getenv("CHUNK_MAX", "2000"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "500"))
 FAST_OCR_PAGE_THRESHOLD = int(os.getenv("FAST_OCR_PAGE_THRESHOLD", "20"))
 
 INPUT_DIR = Path("/data/docs/in")
@@ -133,10 +133,16 @@ def extract_text_with_pypdf(file_bytes: bytes, file_name: str) -> str:
         return ""
 
 
+IMAGE_BEGIN_MARKER = "<image-content-ocr>"
+IMAGE_END_MARKER = "</image-content-ocr>"
+IMAGE_EMPTY_MARKER = '<image-content-ocr empty="true" />'
+
+
 def reparent_picture_texts(doc: DoclingDocument) -> int:
     """Workaround for docling#2345: text OCR'd inside PictureItems is stripped
-    from markdown export. Reparent those text items to the document body so
-    they survive MD export. Returns count of items moved."""
+    from markdown export. Reparent those text items to the document body and
+    wrap each image's OCR block with explicit markers so the RAG LLM can tell
+    the content originated from an image. Returns count of items moved."""
     image_texts: dict[str, list] = {}
     for t in doc.texts:
         parent = getattr(t, "parent", None)
@@ -150,20 +156,30 @@ def reparent_picture_texts(doc: DoclingDocument) -> int:
     moved = 0
     pic_items = [i for i, _ in doc.iterate_items() if isinstance(i, PictureItem)]
     for item in pic_items:
-        if item.self_ref not in image_texts:
-            continue
         ref = item.get_ref()
         try:
             idx = doc.body.children.index(ref)
         except ValueError:
             continue
+
+        texts = image_texts.get(item.self_ref, [])
         item.children = []
-        for st in image_texts[item.self_ref]:
-            doc.body.children.insert(idx, st.get_ref())
-            idx += 1
-            moved += 1
-        doc.body.children.remove(ref)
+
+        if texts:
+            first, last = texts[0], texts[-1]
+            first.text = f"\n\n{IMAGE_BEGIN_MARKER}\n\n{first.text or ''}"
+            last.text = f"{last.text or ''}\n\n{IMAGE_END_MARKER}\n\n"
+            for st in texts:
+                doc.body.children.insert(idx, st.get_ref())
+                idx += 1
+                moved += 1
+            doc.body.children.remove(ref)
     return moved
+
+
+def annotate_image_placeholders(markdown: str) -> str:
+    """Replace docling's raw image placeholders with an LLM-legible marker."""
+    return markdown.replace("<!-- image -->", IMAGE_EMPTY_MARKER)
 
 
 async def process_document_via_docling(
@@ -278,6 +294,8 @@ async def process_document_via_docling(
                 f"Reparent pass failed, using plain MD | File: {file_name} | "
                 f"Error: {type(e).__name__}: {e}"
             )
+
+    markdown = annotate_image_placeholders(markdown)
 
     logger.info(f"Extracted markdown | Chars: {len(markdown):,} | File: {file_name}")
 
